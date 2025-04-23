@@ -1,0 +1,69 @@
+# Enable Alertmanager
+alertmanager:
+  enabled: true
+  # Configuration for alertmanager.yml
+  config:
+    global:
+      resolve_timeout: 5m
+      # Add your Slack API URL details here
+      slack_api_url: 'https://hooks.slack.com/services/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'
+
+    route:
+      group_by: ['job', 'alertname', 'severity']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 1h
+      receiver: 'default-receiver' # Default receiver if no specific matches
+      routes:
+      - receiver: 'default-receiver'
+        match_re:
+          severity: critical|warning
+        continue: true
+
+    receivers:
+    - name: 'default-receiver'
+      slack_configs:
+      - api_url: 'https://hooks.slack.com/services/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'
+        channel: ' #all-my-depi' # Replace with your channel
+        send_resolved: true
+        title: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }} for {{ .CommonLabels.job }}'
+        text: >-
+          {{ range .Alerts }}
+            *Alert:* {{ .Annotations.summary }} - `{{ .Labels.pod }}`
+            *Description:* {{ .Annotations.description }}
+            *Details:*
+            {{ range .Labels.SortedPairs }} • *{{ .Name }}:* `{{ .Value }}`
+            {{ end }}
+          {{ end }}
+
+# Prometheus Server configuration
+server:
+  pass
+
+# Define alerting rules
+serverFiles:
+  alerts:
+    groups:
+    - name: kubernetes-pod-alerts
+      rules:
+      - alert: HighPodCpuUsage
+        expr: |
+          (
+            sum(rate(container_cpu_usage_seconds_total{namespace=~"default", pod=~"web-server-deployment-.*"}[5m])) by (pod)
+          /
+            sum(kube_pod_container_resource_limits{resource="cpu", namespace=~"default", pod=~"web-server-deployment-.*", unit="core"}) by (pod)
+          ) * 100 > 80
+        for: 1m # Duration the condition must be true before firing
+        labels:
+          severity: warning # Severity level (used for routing in Alertmanager)
+        annotations:
+          summary: "High CPU Usage Detected for pod {{ $labels.pod }}"
+          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} has been using over 80% of its CPU limit for the last 5 minutes. Current usage: {{ $value | printf \"%.2f\" }}%."
+
+server:
+ alertmanagers:
+   - namespace: default
+     name: prometheus-alertmanager # Service name: <release>-alertmanager
+     port: http-web # Port name in the service definition (usually 9093)
+     path_prefix: /
+     scheme: http
